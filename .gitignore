@@ -1,0 +1,14 @@
+# Backend Secrets & Environments
+backend/env/
+backend/__pycache__/
+backend/.env
+backend/.pytest_cache/
+
+# Frontend Secrets & Environments
+frontend/node_modules/
+frontend/.next/
+frontend/.env.local
+frontend/.env
+
+# Mac OS System Files
+.DS_Store
