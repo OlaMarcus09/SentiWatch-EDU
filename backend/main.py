@@ -47,13 +47,9 @@ def sync_all_sources(entity_id: str, brand_name: str, place_id: str = "mock_mode
     }
 
 @app.post("/analyze")
-def trigger_sentiment_analysis():
-    """Triggers the AI to score any unprocessed mentions."""
-    processed = analyze_and_store_sentiment()
-    return {
-        "status": "Analysis Complete",
-        "mentions_scored": processed
-    }
+def trigger_analysis(entity_id: str = None, brand_name: str = None):
+    result = analyze_and_store_sentiment(entity_id=entity_id, brand_name=brand_name)
+    return {"status": "Analysis Complete", "mentions_scored": result}
 
 @app.post("/calculate-risk/{entity_id}")
 def trigger_risk_calculation(entity_id: str):
