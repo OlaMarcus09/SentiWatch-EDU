@@ -2,8 +2,9 @@
 import time
 import requests
 from database import supabase
-
-BACKEND_URL = "http://127.0.0.1:8000"
+import os
+# This will look for the variable you just added in Railway
+BACKEND_URL = os.getenv("BACKEND_URL", "http://127.0.0.1:8000")
 
 def run_automated_pipeline():
     print(f"⏰ Background sync initialized at {time.strftime('%Y-%m-%d %H:%M:%S')}")
