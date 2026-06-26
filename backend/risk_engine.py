@@ -195,7 +195,7 @@ def send_email(entity: dict, score: dict) -> bool:
     # Prefer the entity's own email; fall back to env override
     recipient = (
         entity.get("email")
-        or os.getenv("ALERT_EMAIL_FALLBACK", "admin@sentiwatch.com")
+        or os.getenv("ALERT_EMAIL_FALLBACK", "onboarding@resend.dev")
     )
 
     status_emoji = {
@@ -207,7 +207,7 @@ def send_email(entity: dict, score: dict) -> bool:
     }.get(score["status"], "🔔")
 
     resend.Emails.send({
-        "from": "SentiWatch <alerts@sentiwatch.com>",
+        "from": "SentiWatch <onboarding@resend.dev>",
         "to": recipient,
         "subject": (
             f"{status_emoji} Reputation Alert — "

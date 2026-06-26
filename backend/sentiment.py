@@ -4,7 +4,7 @@ import logging
 import time
 from typing import Dict, Any
 
-import requests
+from groq import Groq
 from dotenv import load_dotenv
 
 from database import supabase
@@ -12,11 +12,9 @@ from constants import VALID_CATEGORIES, VALID_RISKS, VALID_SENTIMENTS
 
 load_dotenv()
 
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-
-MODEL = "google/gemini-2.5-flash"
+MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 
 MAX_RETRIES = 3
 
@@ -193,60 +191,43 @@ def validate_ai_output(result: Dict[str, Any]) -> Dict[str, Any]:
 # making it unreachable dead code.
 # -----------------------------------------------------
 
-def call_openrouter(text: str) -> Dict[str, Any]:
+def call_groq(text: str) -> Dict[str, Any]:
 
-    payload = {
-        "model": MODEL,
-        "messages": [
-            {
-                "role": "system",
-                "content": SYSTEM_PROMPT
-            },
-            {
-                "role": "user",
-                "content": text
-            }
-        ],
-        "temperature": 0,
-        "response_format": {
-            "type": "json_object"
-        }
-    }
-
-    headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "Content-Type": "application/json"
-    }
+    client = Groq(api_key=GROQ_API_KEY)
 
     for attempt in range(MAX_RETRIES):
 
         try:
 
-            response = requests.post(
-                OPENROUTER_URL,
-                headers=headers,
-                json=payload,
-                timeout=REQUEST_TIMEOUT
+            response = client.chat.completions.create(
+                model=MODEL,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": SYSTEM_PROMPT
+                    },
+                    {
+                        "role": "user",
+                        "content": text
+                    }
+                ],
+                temperature=0,
+                response_format={"type": "json_object"}
             )
 
-            response.raise_for_status()
-
-            body = response.json()
-
-            content = body["choices"][0]["message"]["content"]
+            content = response.choices[0].message.content
 
             return json.loads(content)
 
         except Exception as e:
 
             logging.warning(
-                f"OpenRouter attempt {attempt + 1} failed: {e}"
+                f"Groq attempt {attempt + 1} failed: {e}"
             )
 
             time.sleep(2)
 
-    raise Exception("OpenRouter failed after retries.")
-
+    raise Exception("Groq failed after retries.")
 
 # -----------------------------------------------------
 # Fetch unprocessed mentions
@@ -342,8 +323,8 @@ def analyze_and_store_sentiment():
     Returns statistics dict with processed/failed counts.
     """
 
-    if not OPENROUTER_API_KEY:
-        logging.error("Missing OPENROUTER_API_KEY")
+    if not GROQ_API_KEY:
+        logging.error("Missing GROQ_API_KEY")
         return {"processed": 0, "failed": 0}
 
     mentions = get_unprocessed_mentions()
@@ -369,7 +350,7 @@ def analyze_and_store_sentiment():
 
         try:
 
-            ai_result = call_openrouter(text)
+            ai_result = call_groq(text)
 
             # FIX: validate_ai_output now exists and runs correctly
             ai_result = validate_ai_output(ai_result)

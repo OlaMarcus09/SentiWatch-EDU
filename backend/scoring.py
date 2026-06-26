@@ -310,14 +310,13 @@ def calculate_entity_score(mentions):
     """
 
     if not mentions:
-
-        return {
-
-            "score": 0,
-
-            "status": "healthy"
-
-        }
+     return {
+        "score": 0,
+        "status": "healthy",
+        "negative_mentions": 0,
+        "positive_mentions": 0,
+        "neutral_mentions": 0
+    }
 
     raw_score = 0
 
