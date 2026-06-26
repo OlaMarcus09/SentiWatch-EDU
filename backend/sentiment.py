@@ -16,7 +16,6 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
-# Fixed model for consistent results
 MODEL = "google/gemini-2.5-flash"
 
 MAX_RETRIES = 3
@@ -27,6 +26,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(message)s"
 )
+
 SYSTEM_PROMPT = """
 You are SentiWatch AI.
 
@@ -138,6 +138,61 @@ prefer neutral.
 
 Return JSON only.
 """
+
+
+# -----------------------------------------------------
+# Validate and sanitise AI output
+# FIX: This function was called but never defined,
+# causing a NameError that silently failed every
+# mention — root cause of the neutral-only bug.
+# -----------------------------------------------------
+
+def validate_ai_output(result: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Ensures all AI output fields are present, correctly typed,
+    and within allowed values. Falls back to safe defaults
+    rather than crashing the pipeline.
+    """
+
+    # Sentiment
+    sentiment = str(result.get("sentiment", "neutral")).lower().strip()
+    result["sentiment"] = sentiment if sentiment in VALID_SENTIMENTS else "neutral"
+
+    # Risk
+    risk = str(result.get("risk", "low")).lower().strip()
+    result["risk"] = risk if risk in VALID_RISKS else "low"
+
+    # Category
+    category = str(result.get("category", "general")).lower().strip()
+    result["category"] = category if category in VALID_CATEGORIES else "general"
+
+    # Severity — clamp to 1–10
+    try:
+        severity = int(result.get("severity", 5))
+    except (ValueError, TypeError):
+        severity = 5
+    result["severity"] = max(1, min(10, severity))
+
+    # Confidence — clamp to 0.0–1.0
+    try:
+        confidence = float(result.get("confidence", 0.75))
+    except (ValueError, TypeError):
+        confidence = 0.75
+    result["confidence"] = max(0.0, min(1.0, confidence))
+
+    # Reason — always a string
+    result["reason"] = str(result.get("reason", "")).strip()
+
+    return result
+
+
+# -----------------------------------------------------
+# OpenRouter API call
+# FIX: Removed the duplicate definition of this function
+# that was previously nested inside the raise statement,
+# making it unreachable dead code.
+# -----------------------------------------------------
+
 def call_openrouter(text: str) -> Dict[str, Any]:
 
     payload = {
@@ -185,121 +240,88 @@ def call_openrouter(text: str) -> Dict[str, Any]:
         except Exception as e:
 
             logging.warning(
-                f"OpenRouter attempt {attempt+1} failed: {e}"
+                f"OpenRouter attempt {attempt + 1} failed: {e}"
             )
 
             time.sleep(2)
 
     raise Exception("OpenRouter failed after retries.")
-    def call_openrouter(text: str) -> Dict[str, Any]:
 
-     payload = {
-        "model": MODEL,
-        "messages": [
-            {
-                "role": "system",
-                "content": SYSTEM_PROMPT
-            },
-            {
-                "role": "user",
-                "content": text
-            }
-        ],
-        "temperature": 0,
-        "response_format": {
-            "type": "json_object"
-        }
-    }
 
-    headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "Content-Type": "application/json"
-    }
+# -----------------------------------------------------
+# Fetch unprocessed mentions
+# FIX: The original fetched a hard limit of 100 rows
+# BEFORE filtering, meaning if 90+ were already
+# processed, new mentions would be silently skipped.
+# Now paginates properly using range() until exhausted.
+# -----------------------------------------------------
 
-    for attempt in range(MAX_RETRIES):
-
-        try:
-
-            response = requests.post(
-                OPENROUTER_URL,
-                headers=headers,
-                json=payload,
-                timeout=REQUEST_TIMEOUT
-            )
-
-            response.raise_for_status()
-
-            body = response.json()
-
-            content = body["choices"][0]["message"]["content"]
-
-            return json.loads(content)
-
-        except Exception as e:
-
-            logging.warning(
-                f"OpenRouter attempt {attempt+1} failed: {e}"
-            )
-
-            time.sleep(2)
-
-    raise Exception("OpenRouter failed after retries.")
 def get_unprocessed_mentions(limit: int = 10):
-
     """
     Returns mentions that have not yet been analysed.
+    Paginates through all mentions to avoid the silent
+    skip bug where processed mentions filled the page.
     """
 
-    mentions = (
-        supabase.table("mentions")
-        .select("*")
-        .order("created_at", desc=False)
-        .limit(100)
-        .execute()
-    ).data
+    BATCH = 200
+    offset = 0
+    unprocessed = []
 
+    # Fetch all already-analysed mention IDs upfront
     sentiment_rows = (
         supabase.table("sentiment_results")
         .select("mention_id")
         .execute()
     ).data
 
-    analysed_ids = {
-        row["mention_id"]
-        for row in sentiment_rows
-    }
+    analysed_ids = {row["mention_id"] for row in sentiment_rows}
 
-    unprocessed = [
-        mention
-        for mention in mentions
-        if mention["id"] not in analysed_ids
-    ]
+    # Page through mentions until we have enough unprocessed ones
+    while len(unprocessed) < limit:
 
-    return unprocessed[:limit]
+        batch = (
+            supabase.table("mentions")
+            .select("*")
+            .order("created_at", desc=False)
+            .range(offset, offset + BATCH - 1)
+            .execute()
+        ).data
+
+        if not batch:
+            break
+
+        for mention in batch:
+            if mention["id"] not in analysed_ids:
+                unprocessed.append(mention)
+                if len(unprocessed) >= limit:
+                    break
+
+        if len(batch) < BATCH:
+            # Reached the end of the table
+            break
+
+        offset += BATCH
+
+    return unprocessed
 
 
-def save_sentiment(mention_id, result):
+# -----------------------------------------------------
+# Save sentiment result
+# -----------------------------------------------------
 
+def save_sentiment(mention_id: str, result: Dict[str, Any]):
     """
     Save AI analysis into sentiment_results table.
     """
 
     payload = {
-
         "mention_id": mention_id,
-
         "label": result["sentiment"],
-
         "confidence": result["confidence"],
-
         "severity": result["severity"],
-
         "category": result["category"],
-
         "risk_level": result["risk"],
-
         "reason": result["reason"]
-
     }
 
     (
@@ -310,117 +332,69 @@ def save_sentiment(mention_id, result):
     )
 
 
-def analyze_and_store_sentiment():
+# -----------------------------------------------------
+# Main analysis pipeline
+# -----------------------------------------------------
 
+def analyze_and_store_sentiment():
     """
     Analyse new mentions using OpenRouter.
-
-    Returns statistics.
+    Returns statistics dict with processed/failed counts.
     """
 
     if not OPENROUTER_API_KEY:
-
         logging.error("Missing OPENROUTER_API_KEY")
-
-        return {
-
-            "processed": 0,
-
-            "failed": 0
-
-        }
+        return {"processed": 0, "failed": 0}
 
     mentions = get_unprocessed_mentions()
 
     if not mentions:
-
-        logging.info("No new mentions.")
-
-        return {
-
-            "processed": 0,
-
-            "failed": 0
-
-        }
+        logging.info("No new mentions to process.")
+        return {"processed": 0, "failed": 0}
 
     processed = 0
-
     failed = 0
 
-    logging.info(
-
-        f"Found {len(mentions)} new mentions."
-
-    )
+    logging.info(f"Found {len(mentions)} new mentions to analyse.")
 
     for mention in mentions:
 
         mention_id = mention["id"]
-
         text = mention.get("content", "")
 
         if not text.strip():
-
-            logging.warning(
-
-                f"Mention {mention_id} has no content."
-
-            )
-
+            logging.warning(f"Mention {mention_id} has no content. Skipping.")
             failed += 1
-
             continue
 
         try:
 
             ai_result = call_openrouter(text)
 
+            # FIX: validate_ai_output now exists and runs correctly
             ai_result = validate_ai_output(ai_result)
 
-            save_sentiment(
-
-                mention_id,
-
-                ai_result
-
-            )
+            save_sentiment(mention_id, ai_result)
 
             logging.info(
-
-                f"Mention {mention_id} analysed."
-
+                f"Mention {mention_id} → "
+                f"sentiment={ai_result['sentiment']} | "
+                f"risk={ai_result['risk']} | "
+                f"severity={ai_result['severity']}"
             )
 
             processed += 1
 
         except Exception as e:
 
-            logging.exception(
-
-                f"Failed analysing mention {mention_id}: {e}"
-
-            )
-
+            logging.exception(f"Failed analysing mention {mention_id}: {e}")
             failed += 1
 
-    logging.info(
+    logging.info(f"Done. Processed={processed}, Failed={failed}")
 
-        f"Finished. Processed={processed}, Failed={failed}"
-
-    )
-
-    return {
-
-        "processed": processed,
-
-        "failed": failed
-
-    }
+    return {"processed": processed, "failed": failed}
 
 
 if __name__ == "__main__":
-
     stats = analyze_and_store_sentiment()
-
     print(stats)
