@@ -1,5 +1,5 @@
 'use client';
-
+import { Plus } from 'lucide-react';
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase'; // Import your supabase client

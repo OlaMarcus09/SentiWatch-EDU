@@ -1,34 +1,89 @@
-// app/page.tsx
-import { redirect } from 'next/navigation';
+'use client';
+
+import { useEffect, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { AlertCircle, CheckCircle, Clock } from 'lucide-react';
 import EntitySelector from '@/components/EntitySelector';
 import SentimentChart from '@/components/SentimentChart';
 import AddBrandForm from '@/components/AddBrandForm';
 
-export const revalidate = 0;
+export default function Dashboard() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const entityIdParam = searchParams.get('entity_id');
 
-export default async function Dashboard({ searchParams }: { searchParams: Promise<{ entity_id?: string }> }) {
-  const resolvedParams = await searchParams;
+  const [loading, setLoading] = useState(true);
+  const [allEntities, setAllEntities] = useState<any[]>([]);
+  const [activeEntity, setActiveEntity] = useState<any>(null);
+  const [mentions, setMentions] = useState<any[]>([]);
+  const [finalRiskScore, setFinalRiskScore] = useState(0);
 
-  // 1. SAAS LOCKDOWN: Get the current user
-  const { data: { session } } = await supabase.auth.getSession();
-  
-  if (!session) {
-    // If they aren't logged in, kick them out to the login page!
-    redirect('/login');
+  useEffect(() => {
+    async function loadDashboard() {
+      // 1. Check Session on the Client Side (Fixes the bounce-back)
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        router.push('/login');
+        return;
+      }
+      
+      const userId = session.user.id;
+
+      // 2. Fetch User's Entities
+      const { data: entities } = await supabase
+        .from('monitored_entities')
+        .select('*')
+        .eq('user_id', userId)
+        .order('name');
+
+      if (!entities || entities.length === 0) {
+        setAllEntities([]);
+        setLoading(false);
+        return;
+      }
+
+      setAllEntities(entities);
+
+      // 3. Set Active Entity
+      const currentEntityId = entityIdParam || entities[0].id;
+      const currentEntity = entities.find(e => e.id === currentEntityId) || entities[0];
+      setActiveEntity(currentEntity);
+
+      // 4. Fetch Mentions for the Active Entity
+      const { data: fetchedMentions } = await supabase
+        .from('mentions')
+        .select(`*, sentiment_results(label, confidence)`)
+        .eq('entity_id', currentEntityId)
+        .order('created_at', { ascending: false });
+
+      setMentions(fetchedMentions || []);
+
+      // 5. Fetch Risk Score (Fixes the Vercel crash)
+      const { data: riskData } = await supabase
+        .from('risk_scores')
+        .select('score')
+        .eq('entity_id', currentEntityId)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .single();
+
+      setFinalRiskScore(Math.min(riskData?.score || 0, 100));
+      setLoading(false);
+    }
+
+    loadDashboard();
+  }, [entityIdParam, router]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <div className="text-slate-500 animate-pulse">Loading your dashboard...</div>
+      </div>
+    );
   }
 
-  const userId = session.user.id;
-
-  // 2. ONLY fetch entities owned by this specific user
-  const { data: allEntities } = await supabase
-    .from('monitored_entities')
-    .select('*')
-    .eq('user_id', userId) // <--- THIS IS THE MAGIC LOCKDOWN LINE
-    .order('name');
-
-  if (!allEntities || allEntities.length === 0) {
+  if (allEntities.length === 0) {
     return (
       <div className="p-8 space-y-6">
         <AddBrandForm />
@@ -39,112 +94,66 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
     );
   }
 
-  // 3. Select active entity
-  const activeEntityId = resolvedParams.entity_id || allEntities[0].id;
-  const entity = allEntities.find((e) => e.id === activeEntityId) || allEntities[0];
-
-  // 4. Fetch mentions only for the active entity
-  const { data: mentions } = await supabase
-    .from('mentions')
-    .select(`*, sentiment_results(label, confidence)`)
-    .eq('entity_id', activeEntityId)
-    .order('created_at', { ascending: false });
-
-  const finalRiskScore = Math.min(accumulatedRisk, 100);
+  // Calculate chart metrics
+  let positive = 0, neutral = 0, negative = 0;
+  mentions.forEach(m => {
+    const label = m.sentiment_results?.[0]?.label || 'neutral';
+    if (label === 'positive') positive++;
+    else if (label === 'negative') negative++;
+    else neutral++;
+  });
 
   return (
-    <div className="space-y-8">
-      
-      {/* Top Banner Widget incorporating Entity Selector component */}
-      <div className="bg-slate-900 text-white rounded-2xl p-6 shadow-md flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight">Welcome to SentiWatch</h1>
-          <p className="text-slate-400 text-sm mt-0.5">Monitoring brand reputation flags across Nigerian digital ecosystem feeds.</p>
+    <div className="space-y-8 p-8 overflow-y-auto h-full">
+      <div className="flex flex-col md:flex-row gap-6">
+        <div className="flex-1">
+          <AddBrandForm />
         </div>
-        <div>
+        <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex items-end">
           <EntitySelector entities={allEntities} />
         </div>
       </div>
 
-      {/* Onboarding Input Stream Form Component */}
-      <AddBrandForm />
-
-      {/* Metric Cards Row */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-        
-        {/* Risk Card */}
-        <div className="bg-white rounded-2xl p-6 border border-gray-100 shadow-sm flex items-center space-x-4">
-          <div className={`p-4 rounded-xl ${finalRiskScore >= 60 ? 'bg-red-50 text-red-600' : 'bg-green-50 text-green-600'}`}>
-            <ShieldAlert className="w-6 h-6" />
-          </div>
-          <div>
-            <p className="text-sm font-medium text-gray-500">Reputation Risk Index</p>
-            <p className="text-2xl font-bold text-gray-900 mt-0.5">{finalRiskScore}/100</p>
-            <p className={`text-xs font-semibold mt-1 ${finalRiskScore >= 60 ? 'text-red-500' : 'text-green-500'}`}>
-              {finalRiskScore >= 60 ? '🚨 Critical State reached' : '✓ Secure standing'}
-            </p>
-          </div>
+        <div className="col-span-1 md:col-span-2 bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
+          <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-6">Sentiment Breakdown</h3>
+          <SentimentChart positive={positive} neutral={neutral} negative={negative} />
         </div>
 
-        {/* Volume Card */}
-        <div className="bg-white rounded-2xl p-6 border border-gray-100 shadow-sm flex items-center space-x-4">
-          <div className="p-4 rounded-xl bg-blue-50 text-blue-600">
-            <MessageSquare className="w-6 h-6" />
+        <div className="col-span-1 bg-white rounded-2xl p-6 shadow-sm border border-gray-100 flex flex-col items-center justify-center relative overflow-hidden">
+          <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-red-500 to-orange-400"></div>
+          <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-2">Live Risk Index</h3>
+          <div className="text-6xl font-black text-slate-800 tracking-tighter my-4">
+            {finalRiskScore.toFixed(0)}<span className="text-2xl text-slate-400 font-medium">/100</span>
           </div>
-          <div>
-            <p className="text-sm font-medium text-gray-500">Total Mentions Evaluated</p>
-            <p className="text-2xl font-bold text-gray-900 mt-0.5">{totalMentions}</p>
-            <p className="text-xs text-slate-400 font-medium mt-1">Aggregated tracking index</p>
-          </div>
-        </div>
-
-        {/* Security / System Integrity Card */}
-        <div className="bg-white rounded-2xl p-6 border border-gray-100 shadow-sm flex items-center space-x-4">
-          <div className="p-4 rounded-xl bg-teal-50 text-teal-600">
-            <ShieldCheck className="w-6 h-6" />
-          </div>
-          <div>
-            <p className="text-sm font-medium text-gray-500">Incident Alert Guard</p>
-            <p className="text-2xl font-bold text-gray-900 mt-0.5">Active</p>
-            <p className="text-xs text-slate-400 font-medium mt-1">Resend notification dispatcher armed</p>
-          </div>
+          <p className="text-sm text-slate-500 text-center">
+            {finalRiskScore > 60 ? 'High risk levels detected.' : finalRiskScore > 30 ? 'Elevated chatter detected.' : 'Brand reputation is healthy.'}
+          </p>
         </div>
       </div>
 
-      {/* Analytics Visualization and Live Feed Split Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        
-        {/* Sentiment breakdown Donut visual block */}
-        <div className="bg-white rounded-2xl p-6 border border-gray-100 shadow-sm h-full flex flex-col justify-between">
-          <div>
-            <h3 className="font-bold text-gray-800 text-lg">Sentiment Analytics</h3>
-            <p className="text-xs text-gray-400 mt-0.5">AI breakdown distribution mapping</p>
-          </div>
-          <div className="py-4">
-            <SentimentChart positive={positiveCount} neutral={neutralCount} negative={negativeCount} />
-          </div>
+      <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden flex flex-col h-[500px]">
+        <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-slate-50/50">
+          <h3 className="text-sm font-bold text-gray-500 uppercase tracking-wider">Recent Mentions</h3>
+          <span className="text-xs font-medium bg-blue-100 text-blue-700 px-2.5 py-1 rounded-full">
+            {mentions.length} events
+          </span>
         </div>
-
-        {/* Mentions Listing Main Stream Feed */}
-        <div className="lg:col-span-2 bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden flex flex-col">
-          <div className="p-6 border-b border-gray-50 bg-white">
-            <h3 className="font-bold text-gray-800 text-lg">System Flag Streams</h3>
-            <p className="text-xs text-gray-400 mt-0.5">Real-time chronologically sorted ingestion listing</p>
-          </div>
-          
-          <div className="divide-y divide-gray-100 overflow-y-auto max-h-[400px]">
-            {!mentions || mentions.length === 0 ? (
-              <div className="p-12 text-center text-gray-400 text-sm">No digital signals parsed yet for this brand profile.</div>
+        
+        <div className="overflow-y-auto flex-1 p-6">
+          <div className="space-y-4">
+            {mentions.length === 0 ? (
+              <div className="text-center text-slate-400 py-8">No mentions found for this entity yet.</div>
             ) : (
-              mentions.map((m: any) => {
+              mentions.map((m) => {
                 const sentiment = m.sentiment_results?.[0]?.label || 'neutral';
+                
                 return (
-                  <div key={m.id} className="p-5 hover:bg-slate-50/50 transition-colors flex flex-col sm:flex-row sm:items-start justify-between gap-4">
-                    <div className="space-y-1.5 max-w-xl">
-                      <div className="flex items-center space-x-2.5">
-                        <span className="text-[11px] font-bold uppercase tracking-wider text-blue-600 bg-blue-50/80 px-2 py-0.5 rounded-md border border-blue-100">
-                          {m.source}
-                        </span>
+                  <div key={m.id} className="flex gap-4 p-4 rounded-xl border border-gray-100 hover:border-blue-100 hover:shadow-sm transition-all bg-white group">
+                    <div className="flex-1 space-y-2">
+                      <div className="flex items-center space-x-2">
+                        <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">{m.source}</span>
+                        <span className="text-gray-300">•</span>
                         <span className="text-xs text-slate-400 flex items-center">
                           <Clock className="w-3 h-3 mr-1" />
                           {new Date(m.created_at).toLocaleDateString(undefined, {month: 'short', day: 'numeric'})}
@@ -174,7 +183,6 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
           </div>
         </div>
       </div>
-
     </div>
   );
 }
