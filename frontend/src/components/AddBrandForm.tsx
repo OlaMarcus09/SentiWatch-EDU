@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { Plus } from 'lucide-react';
+import { supabase } from '@/lib/supabase'; // Import your supabase client
 
 export default function AddBrandForm() {
   const [brandName, setBrandName] = useState('');
@@ -15,21 +15,31 @@ export default function AddBrandForm() {
 
     setLoading(true);
     try {
-      // Automatically switches between localhost and your live Railway backend
+      // 1. Get the current logged-in user
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      // Temporary fallback for testing if you haven't built the login page yet:
+      const userId = session?.user?.id || '00000000-0000-0000-0000-000000000000';
+
       const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
       
       const response = await fetch(`${API_BASE_URL}/entities`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: brandName }),
+        body: JSON.stringify({ 
+            name: brandName,
+            user_id: userId // 2. Send it to the backend!
+        }),
       });
 
       const data = await response.json();
       if (data.success) {
         setBrandName('');
-        // Redirect to the dashboard focused on the brand we just created
-        router.push(`/?entity_id=${data.entity_id}`);
-        router.refresh();
+        // Wait 2 seconds to let Supabase settle, then refresh
+        setTimeout(() => {
+            router.push(`/?entity_id=${data.entity_id}`);
+            router.refresh();
+        }, 2000);
       } else {
         alert(`Error: ${data.error}`);
       }

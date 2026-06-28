@@ -1,69 +1,54 @@
+// app/page.tsx
+import { redirect } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
-import { AlertCircle, CheckCircle, Clock, ShieldAlert, MessageSquare, ShieldCheck } from 'lucide-react';
+import { AlertCircle, CheckCircle, Clock } from 'lucide-react';
 import EntitySelector from '@/components/EntitySelector';
 import SentimentChart from '@/components/SentimentChart';
 import AddBrandForm from '@/components/AddBrandForm';
 
 export const revalidate = 0;
 
-export default async function Dashboard({
-  searchParams,
-}: {
-  searchParams: Promise<{ entity_id?: string }>;
-}) {
+export default async function Dashboard({ searchParams }: { searchParams: Promise<{ entity_id?: string }> }) {
   const resolvedParams = await searchParams;
 
-  // 1. Fetch all monitored entities for the switcher dropdown
-  const { data: allEntities } = await supabase.from('monitored_entities').select('*').order('name');
+  // 1. SAAS LOCKDOWN: Get the current user
+  const { data: { session } } = await supabase.auth.getSession();
+  
+  if (!session) {
+    // If they aren't logged in, kick them out to the login page!
+    redirect('/login');
+  }
+
+  const userId = session.user.id;
+
+  // 2. ONLY fetch entities owned by this specific user
+  const { data: allEntities } = await supabase
+    .from('monitored_entities')
+    .select('*')
+    .eq('user_id', userId) // <--- THIS IS THE MAGIC LOCKDOWN LINE
+    .order('name');
+
   if (!allEntities || allEntities.length === 0) {
     return (
-      <div className="space-y-6">
+      <div className="p-8 space-y-6">
         <AddBrandForm />
         <div className="p-12 text-center text-slate-500 bg-white rounded-2xl border border-gray-100 shadow-sm">
-          No brands are currently being monitored. Use the form above to activate tracking on your first brand.
+          Welcome to SentiWatch! Use the form above to activate tracking on your first brand.
         </div>
       </div>
     );
   }
 
-  // 2. Select active entity (defaults to first item if none selected in URL)
+  // 3. Select active entity
   const activeEntityId = resolvedParams.entity_id || allEntities[0].id;
   const entity = allEntities.find((e) => e.id === activeEntityId) || allEntities[0];
 
-  // 3. Fetch all mentions linked to this specific entity
+  // 4. Fetch mentions only for the active entity
   const { data: mentions } = await supabase
     .from('mentions')
-    .select(`
-      id,
-      source,
-      content,
-      created_at,
-      url,
-      sentiment_results ( label, confidence )
-    `)
-    .eq('entity_id', entity.id)
+    .select(`*, sentiment_results(label, confidence)`)
+    .eq('entity_id', activeEntityId)
     .order('created_at', { ascending: false });
-
-  // 4. Compute metrics right here on the server
-  const totalMentions = mentions?.length || 0;
-  
-  let positiveCount = 0;
-  let neutralCount = 0;
-  let negativeCount = 0;
-  let accumulatedRisk = 0;
-
-  mentions?.forEach((m) => {
-    const label = m.sentiment_results?.[0]?.label || 'neutral';
-    if (label === 'positive') positiveCount++;
-    else if (label === 'neutral') neutralCount++;
-    else if (label === 'negative') {
-      negativeCount++;
-      // Replicate the exact mathematical risk weight assigned by backend risk engine
-      if (m.source.includes('News')) accumulatedRisk += 30;
-      else if (m.source.includes('Maps')) accumulatedRisk += 20;
-      else accumulatedRisk += 10;
-    }
-  });
 
   const finalRiskScore = Math.min(accumulatedRisk, 100);
 
