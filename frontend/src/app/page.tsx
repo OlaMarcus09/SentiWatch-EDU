@@ -1,18 +1,20 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { AlertCircle, CheckCircle, Clock } from 'lucide-react';
 import EntitySelector from '@/components/EntitySelector';
 import SentimentChart from '@/components/SentimentChart';
 import AddBrandForm from '@/components/AddBrandForm';
 
-export default function Dashboard() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const entityIdParam = searchParams.get('entity_id');
+type DashboardProps = {
+  entityIdParam?: string | undefined;
+};
 
+export default function Dashboard({ entityIdParam }: DashboardProps) {
+  const router = useRouter();
+  // removed useSearchParams to avoid prerender-time hook usage
   const [loading, setLoading] = useState(true);
   const [allEntities, setAllEntities] = useState<any[]>([]);
   const [activeEntity, setActiveEntity] = useState<any>(null);
@@ -27,7 +29,7 @@ export default function Dashboard() {
         router.push('/login');
         return;
       }
-      
+
       const userId = session.user.id;
 
       // 2. Fetch User's Entities
@@ -47,7 +49,7 @@ export default function Dashboard() {
 
       // 3. Set Active Entity
       const currentEntityId = entityIdParam || entities[0].id;
-      const currentEntity = entities.find(e => e.id === currentEntityId) || entities[0];
+      const currentEntity = entities.find((e: any) => e.id === currentEntityId) || entities[0];
       setActiveEntity(currentEntity);
 
       // 4. Fetch Mentions for the Active Entity
@@ -139,7 +141,7 @@ export default function Dashboard() {
             {mentions.length} events
           </span>
         </div>
-        
+
         <div className="overflow-y-auto flex-1 p-6">
           <div className="space-y-4">
             {mentions.length === 0 ? (
@@ -147,7 +149,7 @@ export default function Dashboard() {
             ) : (
               mentions.map((m) => {
                 const sentiment = m.sentiment_results?.[0]?.label || 'neutral';
-                
+
                 return (
                   <div key={m.id} className="flex gap-4 p-4 rounded-xl border border-gray-100 hover:border-blue-100 hover:shadow-sm transition-all bg-white group">
                     <div className="flex-1 space-y-2">
