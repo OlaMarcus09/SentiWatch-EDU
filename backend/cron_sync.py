@@ -21,10 +21,17 @@ def run_automated_pipeline():
         # 2. Trigger Scrapers
         requests.post(f"{BACKEND_URL}/sync/{entity_id}?brand_name={name}")
         
-    # 3. Process Sentiments via OpenRouter AI
+    # 3. Process Sentiments — pass entity context so gatekeeper works
     print("🧠 Running sentiment scoring engines...")
-    requests.post(f"{BACKEND_URL}/analyze")
-    
+    for entity in entities:
+        requests.post(
+            f"{BACKEND_URL}/analyze",
+            params={
+                "entity_id": entity["id"],
+                "brand_name": entity["name"]
+            }
+        )
+
     # 4. Evaluate Risk Calculations and Fire Resend Alerts
     print("🚨 Recalculating alert thresholds...")
     for entity in entities:

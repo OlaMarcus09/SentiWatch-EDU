@@ -53,7 +53,7 @@ Rules:
 
 
 def validate_ai_output(result: Dict[str, Any]) -> Dict[str, Any]:
-    # Force lowercase and strip whitespace BEFORE checking
+
     raw_sentiment = str(result.get("sentiment", "neutral")).lower().strip()
     raw_risk = str(result.get("risk", "low")).lower().strip()
     raw_category = str(result.get("category", "general")).lower().strip()
