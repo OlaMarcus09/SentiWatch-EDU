@@ -327,7 +327,6 @@ def calculate_entity_score(mentions):
     neutrals = 0
 
     for mention in mentions:
-
         sentiment = mention.get(
             "label",
             "neutral"

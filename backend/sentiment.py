@@ -53,24 +53,14 @@ Rules:
 
 
 def validate_ai_output(result: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Ensures all AI output fields are strictly valid.
-    """
-    result["sentiment"] = (
-        result.get("sentiment", "neutral")
-        if result.get("sentiment") in VALID_SENTIMENTS
-        else "neutral"
-    )
-    result["risk"] = (
-        result.get("risk", "low")
-        if result.get("risk") in VALID_RISKS
-        else "low"
-    )
-    result["category"] = (
-        result.get("category", "general")
-        if result.get("category") in VALID_CATEGORIES
-        else "general"
-    )
+    # Force lowercase and strip whitespace BEFORE checking
+    raw_sentiment = str(result.get("sentiment", "neutral")).lower().strip()
+    raw_risk = str(result.get("risk", "low")).lower().strip()
+    raw_category = str(result.get("category", "general")).lower().strip()
+
+    result["sentiment"] = raw_sentiment if raw_sentiment in VALID_SENTIMENTS else "neutral"
+    result["risk"] = raw_risk if raw_risk in VALID_RISKS else "low"
+    result["category"] = raw_category if raw_category in VALID_CATEGORIES else "general"
 
     try:
         severity = int(result.get("severity", 5))
