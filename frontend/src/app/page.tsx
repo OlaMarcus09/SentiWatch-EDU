@@ -61,18 +61,22 @@ export default function Dashboard({ entityIdParam }: DashboardProps) {
 
       setMentions(fetchedMentions || []);
 
-      // 5. Fetch Risk Score (Fixes the Vercel crash)
-      const { data: riskData } = await supabase
+      // 5. Fetch Risk Score (Fixes the silent crash)
+      const { data: riskData, error: riskError } = await supabase
         .from('risk_scores')
         .select('score')
         .eq('entity_id', currentEntityId)
         .order('created_at', { ascending: false })
         .limit(1)
-        .single();
+        .maybeSingle(); // <--- CHANGE THIS FROM .single() TO .maybeSingle()
+
+      if (riskError) {
+        console.error("Error fetching risk score:", riskError);
+      }
 
       setFinalRiskScore(Math.min(riskData?.score || 0, 100));
       setLoading(false);
-    }
+      }
 
     loadDashboard();
   }, [entityIdParam, router]);

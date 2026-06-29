@@ -1,8 +1,9 @@
 'use client';
-import { Plus } from 'lucide-react';
+
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { supabase } from '@/lib/supabase'; // Import your supabase client
+import { Plus } from 'lucide-react';
+import { supabase } from '@/lib/supabase'; // Important: Import Supabase!
 
 export default function AddBrandForm() {
   const [brandName, setBrandName] = useState('');
@@ -15,37 +16,38 @@ export default function AddBrandForm() {
 
     setLoading(true);
     try {
-      // 1. Get the current logged-in user
       const { data: { session } } = await supabase.auth.getSession();
-      
-      // Temporary fallback for testing if you haven't built the login page yet:
-      const userId = session?.user?.id || '00000000-0000-0000-0000-000000000000';
+      const token = session?.access_token;
+
+      if (!token) {
+        alert("You must be logged in to track a brand.");
+        setLoading(false);
+        return;
+      }
 
       const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
       
       const response = await fetch(`${API_BASE_URL}/entities`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-            name: brandName,
-            user_id: userId // 2. Send it to the backend!
-        }),
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ name: brandName }),
       });
 
       const data = await response.json();
+      
       if (data.success) {
         setBrandName('');
-        // Wait 2 seconds to let Supabase settle, then refresh
-        setTimeout(() => {
-            router.push(`/?entity_id=${data.entity_id}`);
-            router.refresh();
-        }, 2000);
+        // Force a hard browser redirect to the new entity!
+        window.location.href = `/?entity_id=${data.entity_id}`;
       } else {
-        alert(`Error: ${data.error}`);
+        alert(`Error: ${data.detail || data.error || 'Failed to create entity'}`);
+        setLoading(false);
       }
     } catch (err) {
-      alert('Could not connect to the backend server.');
-    } finally {
+      alert('Could not connect to the backend server. Make sure it is running.');
       setLoading(false);
     }
   };
