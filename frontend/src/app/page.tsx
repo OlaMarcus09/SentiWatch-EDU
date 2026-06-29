@@ -1,20 +1,18 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { AlertCircle, CheckCircle, Clock } from 'lucide-react';
 import EntitySelector from '@/components/EntitySelector';
 import SentimentChart from '@/components/SentimentChart';
 import AddBrandForm from '@/components/AddBrandForm';
 
-type DashboardProps = {
-  entityIdParam?: string | undefined;
-};
-
-export default function Dashboard({ entityIdParam }: DashboardProps) {
+export default function Dashboard() {
   const router = useRouter();
-  // removed useSearchParams to avoid prerender-time hook usage
+  const searchParams = useSearchParams();
+  const entityIdParam = searchParams.get('entity_id');
+
   const [loading, setLoading] = useState(true);
   const [allEntities, setAllEntities] = useState<any[]>([]);
   const [activeEntity, setActiveEntity] = useState<any>(null);
@@ -22,69 +20,103 @@ export default function Dashboard({ entityIdParam }: DashboardProps) {
   const [finalRiskScore, setFinalRiskScore] = useState(0);
 
   useEffect(() => {
+    let attempts = 0;
+    const MAX_ATTEMPTS = 8;
+    let isMounted = true; // Prevents memory leaks if user navigates away
+
     async function loadDashboard() {
-      // 1. Check Session on the Client Side (Fixes the bounce-back)
-      const { data: { session } } = await supabase.auth.getSession();
-      if (!session) {
-        router.push('/login');
-        return;
-      }
+      const {
+  data: { session },
+} = await supabase.auth.getSession();
 
-      const userId = session.user.id;
+console.log('====================');
+console.log('SESSION:', session);
+console.log('SESSION USER ID:', session?.user?.id);
+console.log(
+  'SUPABASE URL:',
+  process.env.NEXT_PUBLIC_SUPABASE_URL
+);
 
-      // 2. Fetch User's Entities
-      const { data: entities } = await supabase
-        .from('monitored_entities')
-        .select('*')
-        .eq('user_id', userId)
-        .order('name');
+if (!session) {
+  console.log('NO SESSION FOUND');
+  if (isMounted) router.push('/login');
+  return;
+}
 
-      if (!entities || entities.length === 0) {
-        setAllEntities([]);
-        setLoading(false);
-        return;
-      }
+const userId = session.user.id;
 
-      setAllEntities(entities);
+const {
+  data: entities,
+  error: entitiesError,
+} = await supabase
+  .from('monitored_entities')
+  .select('*')
+  .eq('user_id', userId)
+  .order('name');
 
-      // 3. Set Active Entity
+console.log('QUERY USER ID:', userId);
+console.log('ENTITIES:', entities);
+console.log('ENTITIES ERROR:', entitiesError);
+console.log('====================');
+
+if (!entities || entities.length === 0) {
+  console.log('NO ENTITIES FOUND');
+
+  if (isMounted) {
+    setAllEntities([]);
+    setLoading(false);
+  }
+
+  return;
+}
+
+      if (isMounted) setAllEntities(entities);
+
       const currentEntityId = entityIdParam || entities[0].id;
       const currentEntity = entities.find((e: any) => e.id === currentEntityId) || entities[0];
-      setActiveEntity(currentEntity);
+      if (isMounted) setActiveEntity(currentEntity);
 
-      // 4. Fetch Mentions for the Active Entity
       const { data: fetchedMentions } = await supabase
         .from('mentions')
         .select(`*, sentiment_results(label, confidence)`)
         .eq('entity_id', currentEntityId)
         .order('created_at', { ascending: false });
 
-      setMentions(fetchedMentions || []);
-
-      // 5. Fetch Risk Score (Fixes the silent crash)
-      const { data: riskData, error: riskError } = await supabase
+      const { data: riskData } = await supabase
         .from('risk_scores')
         .select('score')
         .eq('entity_id', currentEntityId)
         .order('created_at', { ascending: false })
         .limit(1)
-        .maybeSingle(); // <--- CHANGE THIS FROM .single() TO .maybeSingle()
+        .maybeSingle();
 
-      if (riskError) {
-        console.error("Error fetching risk score:", riskError);
+      // The Polling Logic: If no mentions yet, try again in 3 seconds
+      if ((!fetchedMentions || fetchedMentions.length === 0) && attempts < MAX_ATTEMPTS) {
+        attempts++;
+        setTimeout(() => {
+          if (isMounted) loadDashboard();
+        }, 3000);
+        return;
       }
 
-      setFinalRiskScore(Math.min(riskData?.score || 0, 100));
-      setLoading(false);
+      if (isMounted) {
+        setMentions(fetchedMentions || []);
+        setFinalRiskScore(Math.min(riskData?.score || 0, 100));
+        setLoading(false);
       }
+    }
 
     loadDashboard();
+
+    return () => {
+      isMounted = false; // Cleanup timeout on unmount
+    };
   }, [entityIdParam, router]);
 
   if (loading) {
     return (
       <div className="flex items-center justify-center h-full">
-        <div className="text-slate-500 animate-pulse">Loading your dashboard...</div>
+        <div className="text-slate-500 animate-pulse font-medium">Synchronizing brand data...</div>
       </div>
     );
   }
