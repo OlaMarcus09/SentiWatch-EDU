@@ -281,118 +281,64 @@ def score_status(score):
 # -----------------------------------------------------
 
 def calculate_entity_score(mentions):
-
     """
-    mentions =
-
-    [
-
-        {
-
-            sentiment,
-
-            severity,
-
-            confidence,
-
-            source,
-
-            category,
-
-            risk_level,
-
-            created_at
-
+    Calculates final risk metrics and isolates the primary driver of reputation risk.
+    """
+    if not mentions:
+        return {
+            "score": 0,
+            "status": "healthy",
+            "negative_mentions": 0,
+            "positive_mentions": 0,
+            "neutral_mentions": 0,
+            "primary_trigger_category": "general"
         }
 
-    ]
-
-    """
-
-    if not mentions:
-     return {
-        "score": 0,
-        "status": "healthy",
-        "negative_mentions": 0,
-        "positive_mentions": 0,
-        "neutral_mentions": 0
-    }
-
     raw_score = 0
-
     negatives = 0
-
     positives = 0
-
     neutrals = 0
+    
+    # Track the highest severity category to find the root cause
+    highest_severity = -1
+    primary_trigger_category = "general"
 
     for mention in mentions:
-        sentiment = mention.get(
-            "label",
-            "neutral"
-        )
+        # Extract sentiment label correctly from our merged state
+        sentiment = mention.get("label", "neutral")
 
         if sentiment == "negative":
-
             negatives += 1
-
+            
+            # Isolate root cause category
+            current_severity = int(mention.get("severity", 5))
+            if current_severity > highest_severity:
+                highest_severity = current_severity
+                primary_trigger_category = mention.get("category", "general").strip().lower()
+                
         elif sentiment == "positive":
-
             positives += 1
-
         else:
-
             neutrals += 1
 
         raw_score += mention_score(
-
             sentiment=sentiment,
-
-            severity=mention.get(
-                "severity",
-                5
-            ),
-
-            confidence=mention.get(
-                "confidence",
-                0.8
-            ),
-
-            source=mention.get(
-                "source",
-                "other"
-            ),
-
-            category=mention.get(
-                "category",
-                "general"
-            ),
-
-            risk=mention.get(
-                "risk_level",
-                "low"
-            ),
-
-            created_at=mention.get(
-                "created_at"
-            )
-
+            severity=mention.get("severity", 5),
+            confidence=mention.get("confidence", 0.8),
+            source=mention.get("source", "other"),
+            category=mention.get("category", "general"),
+            risk=mention.get("risk_level", "low"),
+            created_at=mention.get("created_at")
         )
 
     raw_score *= volume_multiplier(negatives)
-
     final_score = normalize(raw_score)
 
     return {
-
         "score": final_score,
-
         "status": score_status(final_score),
-
         "negative_mentions": negatives,
-
         "positive_mentions": positives,
-
-        "neutral_mentions": neutrals
-
+        "neutral_mentions": neutrals,
+        "primary_trigger_category": primary_trigger_category
     }

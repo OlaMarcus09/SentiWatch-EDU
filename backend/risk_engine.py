@@ -4,7 +4,7 @@ import resend
 
 from dotenv import load_dotenv
 
-from database import supabase
+from database import supabase, supabase_admin
 
 from scoring import calculate_entity_score
 
@@ -25,7 +25,7 @@ def get_entity(entity_id: str):
     """
 
     result = (
-        supabase
+        supabase_admin
         .table("monitored_entities")
         .select("*")
         .eq("id", entity_id)
@@ -38,10 +38,9 @@ def get_entity(entity_id: str):
 
 # -----------------------------------------------------
 # Fetch mentions
-# FIX: This function was previously indented inside
-# get_entity(), making it a local function that was
-# never callable from outside. Now correctly at
-# module level.
+# Joins mentions + sentiment_results into the flat
+# structure calculate_entity_score() actually expects.
+# Uses supabase_admin to bypass RLS for backend reads.
 # -----------------------------------------------------
 
 def fetch_mentions(entity_id: str):
@@ -52,7 +51,7 @@ def fetch_mentions(entity_id: str):
     """
 
     mentions = (
-        supabase
+        supabase_admin
         .table("mentions")
         .select("*")
         .eq("entity_id", entity_id)
@@ -65,7 +64,7 @@ def fetch_mentions(entity_id: str):
     mention_lookup = {m["id"]: m for m in mentions}
 
     sentiment_rows = (
-        supabase
+        supabase_admin
         .table("sentiment_results")
         .select("*")
         .in_("mention_id", list(mention_lookup.keys()))
@@ -87,11 +86,6 @@ def fetch_mentions(entity_id: str):
             "confidence": row["confidence"],
             "category": row["category"],
             "risk_level": row["risk_level"],
-            # FIX: normalise source string to match SOURCE_WEIGHTS keys
-            # Scrapers saved "Google Maps", "Nigerian News Feed",
-            # "Public Forums (X/Reddit)" — none of which matched
-            # the lowercase underscore keys in constants.py,
-            # so every mention fell through to weight 1.0 ("other").
             "source": _normalise_source(mention.get("source", "other")),
             "created_at": mention.get("created_at")
         })
@@ -103,7 +97,6 @@ def _normalise_source(raw: str) -> str:
     """
     Maps the human-readable source strings saved by scrapers.py
     to the lowercase keys defined in SOURCE_WEIGHTS.
-    Add new mappings here as new scrapers are added.
     """
 
     mapping = {
@@ -128,6 +121,9 @@ def _normalise_source(raw: str) -> str:
 
 # -----------------------------------------------------
 # Save risk score
+# Upserts into risk_scores with the full metric set,
+# including negative/positive/neutral counts the
+# dashboard depends on.
 # -----------------------------------------------------
 
 def save_risk_score(entity_id: str, score: dict):
@@ -137,7 +133,7 @@ def save_risk_score(entity_id: str, score: dict):
     """
 
     existing = (
-        supabase
+        supabase_admin
         .table("risk_scores")
         .select("id")
         .eq("entity_id", entity_id)
@@ -156,7 +152,7 @@ def save_risk_score(entity_id: str, score: dict):
     if existing:
 
         (
-            supabase
+            supabase_admin
             .table("risk_scores")
             .update(payload)
             .eq("entity_id", entity_id)
@@ -166,7 +162,7 @@ def save_risk_score(entity_id: str, score: dict):
     else:
 
         (
-            supabase
+            supabase_admin
             .table("risk_scores")
             .insert(payload)
             .execute()
@@ -175,12 +171,7 @@ def save_risk_score(entity_id: str, score: dict):
 
 # -----------------------------------------------------
 # Send email alert
-# FIX: Was previously indented inside save_risk_score(),
-# making it a local, unreachable function. Now at
-# module level.
-# FIX: Email recipient now pulled from the entity record
-# (entity["email"]) with a fallback env variable rather
-# than being hardcoded to a personal Gmail address.
+# Now actually called from the orchestrator below.
 # -----------------------------------------------------
 
 def send_email(entity: dict, score: dict) -> bool:
@@ -192,7 +183,6 @@ def send_email(entity: dict, score: dict) -> bool:
     if score["score"] < EMAIL_ALERT_THRESHOLD:
         return False
 
-    # Prefer the entity's own email; fall back to env override
     recipient = (
         entity.get("email")
         or os.getenv("ALERT_EMAIL_FALLBACK", "onboarding@resend.dev")
@@ -254,9 +244,100 @@ def send_email(entity: dict, score: dict) -> bool:
 
 
 # -----------------------------------------------------
+# Recommendation Engine
+# Kept exactly as Gemini wrote it — this part was fine.
+# -----------------------------------------------------
+
+def generate_recommendation_matrix(score: int, category: str) -> str:
+    """
+    Returns highly formal, contextual enterprise recommendations for the Nigerian market
+    based on risk bands and primary trigger categories.
+    """
+    category = category.lower().strip()
+
+    if score <= 25:
+        return (
+            "ACTION PLAN: Maintaining Brand Equilibrium\n\n"
+            "1. REPUTATION STATUS: Brand sentiment is stable and within nominal safe operating parameters.\n"
+            "2. DEPLOYMENT TIMELINE: No active crisis intervention required.\n"
+            "3. RECOMMENDATION: Continue standard automated monitoring. Ensure customer service lines "
+            "respond to routine social media inquiries within 4 hours to maintain this baseline. Utilize "
+            "positive feedback trends captured by SentiWatch for organic marketing assets on LinkedIn."
+        )
+
+    elif 26 <= score <= 50:
+        if category in ["customer_service", "operations", "product_quality"]:
+            return (
+                "ACTION PLAN: Operational Friction Triage\n\n"
+                "1. REPUTATION STATUS: Minor cluster of public dissatisfaction identified regarding transaction/delivery delays.\n"
+                "2. DEPLOYMENT TIMELINE: Address via customer success pathways within 24 Hours.\n"
+                "3. RECOMMENDATION: Instruct your digital media team to actively respond to the identified negative "
+                "threads. Use a formal boilerplate acknowledging the glitch without admitting structural fault (e.g., 'We "
+                "are aware some users are experiencing delays and our engineering team is resolving it'). Avoid automated "
+                "bots; deploy human customer support agents to resolve issues publicly. To suppress negative search signals, "
+                "trigger a WhatsApp Business campaign requesting positive reviews from your top 10% loyal active clients."
+            )
+        else:
+            return (
+                "ACTION PLAN: Reputational Baseline Monitoring\n\n"
+                "1. REPUTATION STATUS: Low-level critical chatter detected outside standard customer service issues.\n"
+                "2. DEPLOYMENT TIMELINE: Internal assessment within 24 Hours.\n"
+                "3. RECOMMENDATION: Brief internal communications teams to trace the root source of the negative mentions. "
+                "Do not issue a public statement yet, as this may inadvertently amplify a minor issue. Audit internal access "
+                "logs if the chatter involves operational integrity or data systems."
+            )
+
+    elif 51 <= score <= 75:
+        if category in ["fraud", "financial", "cyber", "security"]:
+            return (
+                "ACTION PLAN: Immediate Trust Protection Protocol\n\n"
+                "1. REPUTATION STATUS: High-risk allegations involving financial irregularities, asset safety, or system security breach.\n"
+                "2. DEPLOYMENT TIMELINE: Executive leadership intervention within 12 Hours.\n"
+                "3. RECOMMENDATION: Immediately draft a formal corporate clarification signed by executive management or the "
+                "Legal Department. Publish this across your verified corporate handles (X, LinkedIn) and pin it. Explicitly state "
+                "that user funds/data remain entirely secure. **Strict Warning:** Do not speculate on regulatory outcomes or make "
+                "defensive emotional claims. Instruct all staff members to refer external press inquiries exclusively to the "
+                "designated media liaison."
+            )
+        elif category in ["regulatory", "legal"]:
+            return (
+                "ACTION PLAN: Regulatory Alignment Strategy\n\n"
+                "1. REPUTATION STATUS: Public chatter regarding regulatory fines, audit investigations, or legal actions.\n"
+                "2. DEPLOYMENT TIMELINE: Legal compliance review within 12 Hours.\n"
+                "3. RECOMMENDATION: Prepare a factual statement verifying your regulatory standing or compliance status. If an "
+                "investigation is ongoing, issue a conservative holding statement: 'We are cooperating fully with the relevant "
+                "authorities to address this administrative inquiry.' Do not debate or antagonize institutional regulators "
+                "(CBN, EFCC, FCCPC, NITDA) in the public domain under any circumstances."
+            )
+        else:
+            return (
+                "ACTION PLAN: Escalated Corporate Triage\n\n"
+                "1. REPUTATION STATUS: High volume of negative public sentiment affecting general brand positioning.\n"
+                "2. DEPLOYMENT TIMELINE: Communications review within 12 Hours.\n"
+                "3. RECOMMENDATION: Convene an emergency meeting of the corporate communications team. Draft an objective "
+                "internal brief explaining the issue, current impacts, and mitigation steps. Pause any active programmatic "
+                "ad campaigns or sponsored content to avoid running paid promotions over live negative commentary."
+            )
+
+    else:
+        return (
+            "CRISIS ACTIVATION MANDATE: Institutional Escalation\n\n"
+            "1. REPUTATION STATUS: Critical threat level. Reputational damage is actively compounding across high-credibility media "
+            "channels (Mainstream Press/Nairaland Frontpage).\n"
+            "2. DEPLOYMENT TIMELINE: **IMMEDIATE DEPLOYMENT (Under 2 Hours)**\n"
+            "3. RECOMMENDATION: Retain a professional, specialized Nigerian PR crisis management firm immediately. SentiWatch "
+            "recommends immediate outreach to verified local partners to handle narrative containment. The CEO or designated "
+            "executive spokesperson must prepare to issue a video address or comprehensive press release addressing the core "
+            "issue transparently. Establish a 24/7 internal war-room to monitor real-time updates via SentiWatch every hour."
+        )
+
+
+# -----------------------------------------------------
 # Main orchestrator
-# FIX: Was previously indented inside send_email(),
-# making it completely unreachable. Now at module level.
+# FIX: Now calls fetch_mentions() to get the properly
+# joined mention+sentiment data, calls save_risk_score()
+# instead of a raw insert (preserving mention counts),
+# and actually calls send_email().
 # -----------------------------------------------------
 
 def calculate_risk_and_alert(entity_id: str) -> dict:
@@ -265,8 +346,9 @@ def calculate_risk_and_alert(entity_id: str) -> dict:
     1. Fetch entity
     2. Fetch and join mentions + sentiment results
     3. Calculate risk score
-    4. Save score to DB
-    5. Send alert if threshold exceeded
+    4. Save score to DB (with full metric set)
+    5. Generate and save recommendation
+    6. Send alert if threshold exceeded
     """
 
     entity = get_entity(entity_id)
@@ -276,18 +358,32 @@ def calculate_risk_and_alert(entity_id: str) -> dict:
 
     mentions = fetch_mentions(entity_id)
 
-    score = calculate_entity_score(mentions)
+    metrics = calculate_entity_score(mentions)
 
-    save_risk_score(entity_id, score)
+    save_risk_score(entity_id, metrics)
 
-    alert = send_email(entity, score)
+    final_score = metrics["score"]
+    trigger_cat = metrics["primary_trigger_category"]
+
+    action_text = generate_recommendation_matrix(final_score, trigger_cat)
+
+    supabase_admin.table("recommendations").insert({
+        "entity_id": entity_id,
+        "risk_score": final_score,
+        "trigger_category": trigger_cat,
+        "action_plan": action_text
+    }).execute()
+
+    alert_sent = send_email(entity, metrics)
 
     return {
         "entity": entity["name"],
-        "risk_score": score["score"],
-        "status": score["status"],
-        "negative_mentions": score["negative_mentions"],
-        "positive_mentions": score["positive_mentions"],
-        "neutral_mentions": score["neutral_mentions"],
-        "email_sent": alert
+        "risk_score": final_score,
+        "status": metrics["status"],
+        "negative_mentions": metrics["negative_mentions"],
+        "positive_mentions": metrics["positive_mentions"],
+        "neutral_mentions": metrics["neutral_mentions"],
+        "primary_trigger_category": trigger_cat,
+        "recommendation_generated": True,
+        "email_sent": alert_sent
     }

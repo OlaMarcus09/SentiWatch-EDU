@@ -4,7 +4,7 @@ from pydantic import BaseModel
 import os
 from supabase import create_client, Client
 
-from database import supabase
+from database import supabase, supabase_admin
 from scrapers import (
     scrape_nigerian_news,
     fetch_google_reviews,
@@ -28,23 +28,6 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-)
-
-# =========================================================
-# SUPABASE ADMIN CLIENT
-# =========================================================
-
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_SERVICE_ROLE = os.getenv("SUPABASE_SERVICE_ROLE")
-
-if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE:
-    raise ValueError(
-        "Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE environment variables."
-    )
-
-supabase_admin: Client = create_client(
-    SUPABASE_URL,
-    SUPABASE_SERVICE_ROLE,
 )
 
 # =========================================================

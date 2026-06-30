@@ -3,12 +3,11 @@
 import { Suspense, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
-import { AlertCircle, CheckCircle, Clock, Loader2 } from 'lucide-react';
+import { AlertCircle, CheckCircle, Clock, Loader2, Zap } from 'lucide-react';
 import EntitySelector from '@/components/EntitySelector';
 import SentimentChart from '@/components/SentimentChart';
 import AddBrandForm from '@/components/AddBrandForm';
 
-// Suspense boundary wrapper — fixes Next.js 15 hydration warning
 export default function Page() {
   return (
     <Suspense fallback={
@@ -31,6 +30,7 @@ function Dashboard() {
   const [allEntities, setAllEntities] = useState<any[]>([]);
   const [mentions, setMentions] = useState<any[]>([]);
   const [finalRiskScore, setFinalRiskScore] = useState(0);
+  const [recommendation, setRecommendation] = useState<any>(null); // NEW STATE
 
   useEffect(() => {
     let attempts = 0;
@@ -39,7 +39,6 @@ function Dashboard() {
 
     async function loadDashboard() {
       try {
-        // 1. Auth check
         const { data: { session } } = await supabase.auth.getSession();
         if (!session) {
           if (isMounted) router.push('/login');
@@ -48,7 +47,6 @@ function Dashboard() {
 
         const userId = session.user.id;
 
-        // 2. Fetch entities
         const { data: entities, error: entitiesError } = await supabase
           .from('monitored_entities')
           .select('*')
@@ -73,7 +71,6 @@ function Dashboard() {
 
         const currentEntityId = entityIdParam || entities[0].id;
 
-        // 3. Fetch mentions
         const { data: fetchedMentions, error: mentionsError } = await supabase
           .from('mentions')
           .select('*')
@@ -81,7 +78,6 @@ function Dashboard() {
           .order('created_at', { ascending: false });
 
         if (mentionsError) {
-          // Surface the real error instead of silently retrying
           console.error('Mentions error:', mentionsError);
           if (mentionsError.code === '42501' || mentionsError.message?.includes('403')) {
             if (isMounted) setError('Permission denied reading mentions. Check Supabase RLS policies.');
@@ -89,7 +85,6 @@ function Dashboard() {
           }
         }
 
-        // 4. Polling — only retry if genuinely empty, not on error
         if (!mentionsError && (!fetchedMentions || fetchedMentions.length === 0) && attempts < MAX_ATTEMPTS) {
           attempts++;
           setTimeout(() => {
@@ -98,21 +93,15 @@ function Dashboard() {
           return;
         }
 
-        // 5. Fetch sentiment results separately (avoids PostgREST join dependency)
         const mentionIds = (fetchedMentions || []).map((m: any) => m.id);
 
-        const { data: sentimentRows, error: sentimentError } = mentionIds.length > 0
+        const { data: sentimentRows } = mentionIds.length > 0
           ? await supabase
               .from('sentiment_results')
               .select('mention_id, label, confidence')
               .in('mention_id', mentionIds)
-          : { data: [], error: null };
+          : { data: [] };
 
-        if (sentimentError) {
-          console.error('Sentiment results error:', sentimentError);
-        }
-
-        // 6. Merge mentions + sentiment in JS (no FK join needed)
         const sentimentMap = Object.fromEntries(
           (sentimentRows || []).map((s: any) => [s.mention_id, s])
         );
@@ -122,17 +111,27 @@ function Dashboard() {
           sentiment_results: sentimentMap[m.id] ? [sentimentMap[m.id]] : []
         }));
 
-        // 7. Fetch risk score
         const { data: riskData } = await supabase
           .from('risk_scores')
           .select('score')
           .eq('entity_id', currentEntityId)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        // NEW: Fetch the latest recommendation
+        const { data: recData } = await supabase
+          .from('recommendations')
+          .select('*')
+          .eq('entity_id', currentEntityId)
+          .order('created_at', { ascending: false })
           .limit(1)
           .maybeSingle();
 
         if (isMounted) {
           setMentions(mergedMentions);
           setFinalRiskScore(Math.min(riskData?.score || 0, 100));
+          setRecommendation(recData); // Save to state
           setLoading(false);
         }
 
@@ -149,7 +148,6 @@ function Dashboard() {
     };
   }, [entityIdParam, router]);
 
-  // Loading state
   if (loading && !error) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-3">
@@ -159,7 +157,6 @@ function Dashboard() {
     );
   }
 
-  // Error state
   if (error) {
     return (
       <div className="flex items-center justify-center h-full p-8">
@@ -177,7 +174,6 @@ function Dashboard() {
     );
   }
 
-  // No entities yet
   if (allEntities.length === 0) {
     return (
       <div className="p-8 space-y-6">
@@ -189,7 +185,6 @@ function Dashboard() {
     );
   }
 
-  // Calculate chart metrics
   let positive = 0, neutral = 0, negative = 0;
   mentions.forEach(m => {
     const label = m.sentiment_results?.[0]?.label || 'neutral';
@@ -199,9 +194,8 @@ function Dashboard() {
   });
 
   return (
-    <div className="space-y-8 p-8 overflow-y-auto h-full">
+    <div className="space-y-8 p-8 overflow-y-auto h-full bg-slate-50/50">
 
-      {/* Top bar: Add brand + entity selector */}
       <div className="flex flex-col md:flex-row gap-6">
         <div className="flex-1">
           <AddBrandForm />
@@ -211,7 +205,6 @@ function Dashboard() {
         </div>
       </div>
 
-      {/* Metrics row */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         <div className="col-span-1 md:col-span-2 bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
           <h3 className="text-sm font-bold text-gray-400 uppercase tracking-wider mb-6">
@@ -239,7 +232,22 @@ function Dashboard() {
         </div>
       </div>
 
-      {/* Mentions feed */}
+      {/* NEW: Automated Consultant Recommendation Card */}
+      {recommendation && (
+        <div className="bg-slate-900 rounded-2xl p-6 shadow-lg border border-slate-800 text-white relative overflow-hidden">
+          <div className="absolute top-0 right-0 w-32 h-32 bg-blue-500 opacity-10 rounded-full blur-3xl" />
+          <div className="flex items-center gap-3 mb-4 relative z-10">
+            <div className="bg-blue-500/20 p-2 rounded-lg border border-blue-500/30">
+              <Zap className="w-5 h-5 text-blue-400" />
+            </div>
+            <h3 className="text-lg font-bold tracking-wide">Automated Crisis Consultant</h3>
+          </div>
+          <div className="space-y-3 whitespace-pre-wrap text-slate-300 text-sm leading-relaxed relative z-10">
+            {recommendation.action_plan}
+          </div>
+        </div>
+      )}
+
       <div className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden flex flex-col h-[500px]">
         <div className="p-6 border-b border-gray-100 flex justify-between items-center bg-slate-50/50">
           <h3 className="text-sm font-bold text-gray-500 uppercase tracking-wider">
