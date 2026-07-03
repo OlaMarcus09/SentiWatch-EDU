@@ -240,7 +240,7 @@ function Dashboard() {
             <div className="bg-blue-500/20 p-2 rounded-lg border border-blue-500/30">
               <Zap className="w-5 h-5 text-blue-400" />
             </div>
-            <h3 className="text-lg font-bold tracking-wide">Automated Crisis Consultant</h3>
+            <h3 className="text-lg font-bold tracking-wide">Student Welfare Insights</h3>
           </div>
           <div className="space-y-3 whitespace-pre-wrap text-slate-300 text-sm leading-relaxed relative z-10">
             {recommendation.action_plan}

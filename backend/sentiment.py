@@ -24,31 +24,37 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)s | %(message)s"
 )
 
-SYSTEM_PROMPT = """
-You are SentiWatch AI, an expert Brand Reputation Intelligence Analyst.
-Task: Analyze if the text damages or enhances brand trust.
-Output: Return ONLY valid JSON. No markdown formatting.
+CLASSIFICATION_PROMPT = """
+You are an EDU sentiment and risk classifier for university operations.
 
-Schema:
+Return ONLY strict JSON with this schema:
 {
-    "sentiment":"positive|neutral|negative",
-    "severity":1-10,
-    "confidence":0.0-1.0,
-    "category":"fraud|legal|regulatory|customer_service|product_quality|operations|cyber|security|financial|leadership|general",
-    "risk":"low|medium|high|critical",
-    "reason":"Short sentence explaining the decision."
+  "sentiment": "positive|neutral|negative",
+  "severity": 1-10,
+  "confidence": 0.0-1.0,
+  "category": "exams|portal_issues|lecturers|fees|hostels|admissions|scholarships|campus_life",
+  "risk": "low|moderate|high|critical",
+  "reason": "short explanation"
 }
 
-Examples:
-1. Headline: "EFCC Arraigns CEO Over Fraud" -> {"sentiment":"negative", "severity":10, "confidence":0.99, "category":"fraud", "risk":"critical", "reason":"Fraud investigation is a severe reputational threat."}
-2. Headline: "Company Wins Industry Innovation Award" -> {"sentiment":"positive", "severity":7, "confidence":0.98, "category":"general", "risk":"low", "reason":"Innovation awards enhance brand perception."}
-3. Headline: "Company announces office holiday hours" -> {"sentiment":"neutral", "severity":1, "confidence":0.95, "category":"general", "risk":"low", "reason":"Routine operational update."}
+Guidelines:
+- Classify based on likely impact to student welfare, trust, and campus operations.
+- If text reports disruption, unfairness, outage, exclusion risk, or safety/welfare concern, bias toward negative.
+- Keep reason concise and factual.
+- confidence must reflect certainty from text evidence.
 
-Rules:
-- If text involves crime, fraud, police, court, or scandals, classify as NEGATIVE regardless of tone.
-- If the content is purely operational (office hours, holidays), classify as NEUTRAL.
-- If uncertain between negative and neutral, bias towards NEGATIVE.
-- If output is invalid JSON, the system fails. Be precise.
+Examples:
+1) "Portal keeps failing during course registration" ->
+{"sentiment":"negative","severity":8,"confidence":0.95,"category":"portal_issues","risk":"high","reason":"Registration portal failure affects access to core academic processes."}
+
+2) "Hostel conditions are getting worse and complaints are ignored" ->
+{"sentiment":"negative","severity":8,"confidence":0.93,"category":"hostels","risk":"high","reason":"Welfare-related accommodation complaints indicate elevated student risk."}
+
+3) "Scholarship disbursement has been delayed again" ->
+{"sentiment":"negative","severity":7,"confidence":0.9,"category":"scholarships","risk":"high","reason":"Funding delay can cause financial distress and exclusion pressure."}
+
+4) "Exam timetable was released clearly and on time" ->
+{"sentiment":"positive","severity":2,"confidence":0.88,"category":"exams","risk":"low","reason":"Clear exam communication improves confidence and reduces disruption."}
 """
 
 

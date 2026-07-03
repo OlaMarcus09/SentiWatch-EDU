@@ -42,23 +42,31 @@ SOURCE_WEIGHTS = {
 
 
 # ----------------------------------------------------
-# Category weights
-# ----------------------------------------------------
+# --- CATEGORY WEIGHTS (EDU) ---
 
 CATEGORY_WEIGHTS = {
-    "fraud": 2.0,
-    "legal": 1.9,
-    "regulatory": 1.8,
-    "cyber": 1.8,
-    "security": 1.8,
-    "product_quality": 1.5,
-    "operations": 1.4,
-    "customer_service": 1.2,
-    "leadership": 1.5,
-    "financial": 1.7,
-    "general": 1.0,
+    "exams": 1.7,
+    "portal_issues": 1.8,
+    "lecturers": 1.5,
+    "fees": 1.8,
+    "hostels": 1.6,
+    "admissions": 1.6,
+    "scholarships": 1.7,
+    "campus_life": 1.4,
 }
 
+# --- ALLOWED CATEGORIES (EDU) ---
+
+ALLOWED_CATEGORIES = [
+    "exams",
+    "portal_issues",
+    "lecturers",
+    "fees",
+    "hostels",
+    "admissions",
+    "scholarships",
+    "campus_life",
+]
 
 # ----------------------------------------------------
 # Risk multipliers
@@ -124,19 +132,17 @@ VOLUME_MULTIPLIERS = {
 # AI output validation sets
 # ----------------------------------------------------
 
-VALID_CATEGORIES = {
-    "fraud",
-    "legal",
-    "regulatory",
-    "customer_service",
-    "product_quality",
-    "operations",
-    "cyber",
-    "security",
-    "financial",
-    "leadership",
-    "general",
-}
+# replace the old ALLOWED_CATEGORIES block with:
+ALLOWED_CATEGORIES = [
+    "exams",
+    "portal_issues",
+    "lecturers",
+    "fees",
+    "hostels",
+    "admissions",
+    "scholarships",
+    "campus_life",
+]
 
 VALID_SENTIMENTS = {
     "positive",
